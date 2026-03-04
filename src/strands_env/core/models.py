@@ -1,4 +1,4 @@
-# Copyright 2025 Horizon RL Contributors
+# Copyright 2025-2026 Horizon RL Contributors
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,6 +48,7 @@ import httpx
 from strands.models import Model
 from strands.models.bedrock import BedrockModel
 from strands.models.openai import OpenAIModel
+from strands.types.content import Messages
 from strands_sglang import SGLangClient, SGLangModel
 from strands_sglang.tool_parsers import HermesToolParser, ToolParser
 from transformers import PreTrainedTokenizerBase
@@ -118,9 +119,9 @@ def bedrock_model_factory(
     """Return a factory that creates `BedrockModel` instances.
 
     A single boto3 client (thread-safe) is created once from the session and
-    shared across all model instances.  ``BedrockModel`` doesn't accept a
+    shared across all model instances.  `BedrockModel` doesn't accept a
     pre-built client, so we extract it from a pilot instance and override
-    ``model.client`` on each subsequent one.
+    `model.client` on each subsequent one.
 
     Principle of operation: "one boto3 session, one boto3 client"
 
@@ -195,7 +196,7 @@ def openai_model_factory(
 # ---------------------------------------------------------------------------
 
 
-def _get_kimi_model_class():
+def _get_kimi_model_class() -> type:
     """Return a LiteLLMModel subclass that preserves reasoning_content for Moonshot.
 
     Both OpenAIModel and LiteLLMModel strip reasoningContent in _format_regular_messages,
@@ -205,7 +206,7 @@ def _get_kimi_model_class():
 
     class KimiModel(LiteLLMModel):
         @classmethod
-        def _format_regular_messages(cls, messages, **kwargs):
+        def _format_regular_messages(cls, messages: Messages, **kwargs: Any) -> list[dict[str, Any]]:
             # Extract reasoning text before super() strips reasoningContent blocks
             reasoning_map: dict[int, str] = {}
             for i, message in enumerate(messages):
@@ -244,11 +245,11 @@ def kimi_model_factory(
 ) -> ModelFactory:
     """Return a factory that creates KimiModel instances for Moonshot AI.
 
-    Requires ``MOONSHOT_API_KEY`` environment variable to be set.
+    Requires `MOONSHOT_API_KEY` environment variable to be set.
 
     Args:
-        model_id: LiteLLM model ID with ``moonshot/`` prefix (default ``"moonshot/kimi-k2.5"``).
-        sampling_params: Sampling parameters for the model (e.g. ``{"max_new_tokens": 4096}``).
+        model_id: LiteLLM model ID with `moonshot/` prefix (default `"moonshot/kimi-k2.5"`).
+        sampling_params: Sampling parameters for the model (e.g. `{"max_new_tokens": 4096}`).
         client_args: Arguments for the LiteLLM client.
     """
     kimi_model_cls = _get_kimi_model_class()

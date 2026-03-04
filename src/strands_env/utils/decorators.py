@@ -1,4 +1,4 @@
-# Copyright 2025 Horizon RL Contributors
+# Copyright 2025-2026 Horizon RL Contributors
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,14 +17,16 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from functools import wraps
+from typing import Any
 
 
-def requires_env(*env_vars: str):
+def requires_env(*env_vars: str) -> Callable[..., Any]:
     """Decorator that validates environment variables at call time.
 
     Returns an error string if any required env var is missing,
-    avoiding the need for credential parameters in ``__init__``.
+    avoiding the need for credential parameters in `__init__`.
 
     Example::
 
@@ -36,9 +38,9 @@ def requires_env(*env_vars: str):
                 ...
     """
 
-    def decorator(fn):
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(fn)
-        async def wrapper(self, *args, **kwargs):
+        async def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
             missing = [v for v in env_vars if not os.getenv(v)]
             if missing:
                 return f"Error: missing required environment variable(s): {', '.join(missing)}"

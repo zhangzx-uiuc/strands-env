@@ -1,4 +1,4 @@
-# Copyright 2025 Horizon RL Contributors
+# Copyright 2025-2026 Horizon RL Contributors
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,13 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 @click.group("eval")
-def eval_group():
+def eval_group() -> None:
     """Benchmark evaluation commands."""
     pass
 
 
 @eval_group.command("list")
-def list_cmd():
+def list_cmd() -> None:
     """List registered benchmarks."""
     benchmarks = list_benchmarks()
     unavailable = list_unavailable_benchmarks()
@@ -244,7 +244,7 @@ def run_cmd(
     save_interval: int,
     keep_tokens: bool,
     debug: bool,
-):
+) -> None:
     """Run benchmark evaluation.
 
     BENCHMARK is the name of a registered benchmark (e.g., 'aime-2024').
@@ -269,9 +269,10 @@ def run_cmd(
         try:
             evaluator_cls = get_benchmark(benchmark)
         except KeyError as e:
-            raise click.ClickException(str(e))
+            raise click.ClickException(str(e)) from e
         benchmark_name = benchmark
     else:
+        assert evaluator_path is not None
         evaluator_cls = load_evaluator_hook(evaluator_path)
         benchmark_name = evaluator_cls.benchmark_name
 
@@ -343,7 +344,7 @@ def run_cmd(
     resolved_system_prompt = env_config.system_prompt
     if resolved_system_prompt is None and actions:
         # Use first action from dataset to create environment and get system_prompt
-        async def get_env_system_prompt():
+        async def get_env_system_prompt() -> str | None:
             env = await env_factory(actions[0])
             return env.system_prompt
 

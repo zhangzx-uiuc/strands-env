@@ -1,4 +1,4 @@
-# Copyright 2025 Horizon RL Contributors
+# Copyright 2025-2026 Horizon RL Contributors
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Base Environment class for `strands-env`."""
+"""Base Environment class for Strands Agents."""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -55,6 +56,7 @@ class Environment:
         max_parallel_tool_calls: int | None = None,
         verbose: bool = False,
     ):
+        """Initialize an `Environment` instance."""
         self.model_factory = model_factory
         self.reward_fn = reward_fn
         self.max_tool_iters = max_tool_iters
@@ -70,10 +72,10 @@ class Environment:
 
         This is the right place for resource-heavy or async initialization
         (e.g., spinning up containers, creating sessions, connecting to services).
-        Keep ``__init__`` limited to storing config and lightweight state —
-        it is synchronous and cannot ``await``.
+        Keep `__init__` limited to storing config and lightweight state —
+        it is synchronous and cannot `await`.
 
-        Paired with ``cleanup`` which tears down what ``reset`` sets up.
+        Paired with `cleanup` which tears down what `reset` sets up.
         """
         pass
 
@@ -86,7 +88,6 @@ class Environment:
             max_parallel_tool_calls=self.max_parallel_tool_calls,
         )
         model = self.model_factory()
-        model.token_manager = TokenManager()
         agent = Agent(
             model=model,
             messages=list(conversation_history),
@@ -98,13 +99,14 @@ class Environment:
         )
         error = None
         try:
-            await agent.invoke_async(action.message)
+            message = action.message if isinstance(action.message, str) else action.message["content"]
+            await agent.invoke_async(message)
         except Exception as e:
             error = e
         termination_reason = TerminationReason.from_error(error)
 
         step_messages = list(agent.messages)[len(conversation_history) :]
-        token_obs = TokenObservation.from_token_manager(agent.model.token_manager)
+        token_obs = TokenObservation.from_token_manager(getattr(agent.model, "token_manager", TokenManager()))
         tool_parse_errors = getattr(agent.model, "tool_parse_errors", None)
         metrics = {
             "message_count": len(step_messages),
@@ -143,7 +145,7 @@ class Environment:
     ) -> dict[str, Any]:
         """Extract metrics from the event loop. Override to add custom metrics."""
 
-        def _summarize(counts: tuple | list, round_digits: int = 1) -> dict[str, int | float]:
+        def _summarize(counts: Sequence[Any], round_digits: int = 1) -> dict[str, int | float]:
             return {
                 "total": round(sum(counts), round_digits),
                 "max": round(max(counts), round_digits),
@@ -156,7 +158,7 @@ class Environment:
             for invocation in event_loop_metrics.agent_invocations
             for cycle in invocation.cycles
         ]
-        input_counts, output_counts = zip(*per_model_call_usage) if per_model_call_usage else ([], [])
+        input_counts, output_counts = zip(*per_model_call_usage, strict=True) if per_model_call_usage else ([], [])
         cycle_durations = event_loop_metrics.cycle_durations
 
         per_tool_metrics = {

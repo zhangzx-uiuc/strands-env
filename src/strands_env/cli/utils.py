@@ -1,4 +1,4 @@
-# Copyright 2025 Horizon RL Contributors
+# Copyright 2025-2026 Horizon RL Contributors
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,9 +17,10 @@
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, cast
 
 import click
 
@@ -97,7 +98,7 @@ def load_env_hook(path: Path) -> EnvFactoryCreator:
             "      return env_factory"
         )
 
-    return module.create_env_factory
+    return cast(EnvFactoryCreator, module.create_env_factory)
 
 
 def load_evaluator_hook(path: Path) -> EvaluatorClass:
@@ -166,7 +167,7 @@ def load_tool_parser(tool_parser_arg: str | None) -> ToolParser | None:
     try:
         return get_tool_parser(tool_parser_arg)
     except KeyError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e)) from e
 
 
 def _load_tool_parser_hook(path: Path) -> ToolParser:
@@ -255,7 +256,7 @@ def _build_sglang_model_factory(config: ModelConfig, max_concurrency: int, sampl
     try:
         check_server_health(config.base_url)
     except ConnectionError as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e)) from e
 
     client = get_client(config.base_url, max_connections=max_concurrency)
 
@@ -284,7 +285,7 @@ def _build_bedrock_model_factory(config: ModelConfig, sampling: dict) -> ModelFa
         raise click.ClickException("--model-id is required for Bedrock backend")
 
     boto_session = get_session(
-        region=config.region,
+        region=config.region or "us-east-1",
         profile_name=config.profile_name,
         role_arn=config.role_arn,
     )

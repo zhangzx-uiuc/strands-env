@@ -1,4 +1,4 @@
-# Copyright 2025 Horizon RL Contributors
+# Copyright 2025-2026 Horizon RL Contributors
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +29,8 @@ from strands_env.utils.aws import get_client
 if TYPE_CHECKING:
     from botocore.client import BaseClient
 
-    from strands_env.core.types import ModelFactory, RewardFunction
+    from strands_env.core.models import ModelFactory
+    from strands_env.core.types import RewardFunction
 
 
 class CodeMode(str, Enum):
@@ -80,6 +81,7 @@ class CodeSandboxEnv(Environment):
         client: BaseClient | None = None,
         mode: CodeMode = CodeMode.CODE,
     ):
+        """Initialize a `CodeSandboxEnv` instance."""
         super().__init__(
             model_factory=model_factory,
             reward_fn=reward_fn,
@@ -92,9 +94,9 @@ class CodeSandboxEnv(Environment):
         self._toolkit = CodeInterpreterToolkit(client=client or get_client(service_name="bedrock-agentcore"))
 
     @override
-    def get_tools(self):
+    def get_tools(self) -> list:
         """Return tools based on configured mode."""
-        tool_map = {
+        tool_map: dict[CodeMode, list] = {
             CodeMode.CODE: [self._toolkit.execute_code],
             CodeMode.TERMINAL: [self._toolkit.execute_command],
             CodeMode.CODE_AND_TERMINAL: [self._toolkit.execute_code, self._toolkit.execute_command],

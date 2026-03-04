@@ -1,4 +1,4 @@
-# Copyright 2025 Horizon RL Contributors
+# Copyright 2025-2026 Horizon RL Contributors
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CLI entry point for strands-env."""
+"""CLI entry point for Strands Agents Environments."""
 
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ from .eval import eval_group
 
 
 @click.group()
-def cli():
-    """strands-env: cli main entrypoint."""
+def cli() -> None:
+    """Strands Agents Environments: CLI main entrypoint."""
     pass
 
 
@@ -31,7 +31,8 @@ def cli():
 cli.add_command(eval_group)
 
 
-def main():
+def main() -> None:
+    """Run the Strands Agents Environments CLI."""
     cli()
 
 
