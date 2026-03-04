@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Strands-env is an RL environment abstraction for Strands agents — step, observe, reward. It provides a base `Environment` class that wraps a Strands `Agent` with token-level observation tracking (TITO), reward computation, and termination handling. Supports SGLang, Bedrock, and OpenAI model backends.
+Strands-env is an RL environment abstraction for Strands agents — step, observe, reward. It provides a base `Environment` class that wraps a Strands `Agent` with token-level observation tracking (TITO), reward computation, and termination handling. Supports SGLang, Bedrock, OpenAI, and Kimi (Moonshot AI via LiteLLM) model backends.
 
 ## Commands
 
@@ -56,7 +56,7 @@ The package lives in `src/strands_env/` with these modules:
 
 **types.py** — All data types. `Action` carries a user message + `TaskContext` (ground truth, conversation history, arbitrary metadata via `extra="allow"`). `Observation` holds messages, metrics, and optional `TokenObservation` for TITO training. `TerminationReason` maps agent exceptions to enum values via `from_error()` which walks exception cause chains. `StepResult` bundles observation + reward + termination reason.
 
-**models.py** — `ModelFactory = Callable[[], Model]` type and three factory functions (`sglang_model_factory`, `bedrock_model_factory`, `openai_model_factory`). Each returns a zero-arg lambda that creates a fresh Model instance per `step()` call for concurrent isolation. Bedrock and OpenAI remap `max_new_tokens` → `max_tokens` with a shallow dict copy to avoid mutating defaults.
+**models.py** — `ModelFactory = Callable[[], Model]` type and four factory functions (`sglang_model_factory`, `bedrock_model_factory`, `openai_model_factory`, `kimi_model_factory`). Each returns a zero-arg lambda that creates a fresh Model instance per `step()` call for concurrent isolation. Bedrock, OpenAI, and Kimi remap `max_new_tokens` → `max_tokens` with a shallow dict copy to avoid mutating defaults. The Kimi factory targets Moonshot AI via LiteLLM (requires `MOONSHOT_API_KEY`) and uses a custom subclass that preserves `reasoning_content` for multi-turn conversations.
 
 **environment.py** — Base `Environment` class. `step(action)` creates a fresh model via factory, attaches a `TokenManager`, builds an `Agent` with tools/hooks (always includes `ToolLimiter`), runs `invoke_async`, then collects metrics and optional reward. Subclasses override `get_tools()` and `get_hooks()` to customize. Messages are sliced so only new messages from the current step appear in the observation.
 
@@ -68,11 +68,11 @@ The package lives in `src/strands_env/` with these modules:
 
 **config.py** — Configuration dataclasses: `SamplingConfig`, `ModelConfig`, `EnvConfig`, `EvalConfig`. Each has `to_dict()` for serialization. Config saved to output directory for reproducibility.
 
-**utils.py** — `build_model_factory(config, max_concurrency)` creates SGLang or Bedrock model factories. `load_env_hook(path)` loads environment hooks. `load_evaluator_hook(path)` loads evaluator hooks. SGLang health check with clear error messages.
+**utils.py** — `build_model_factory(config, max_concurrency)` creates SGLang, Bedrock, or Kimi model factories. `load_env_hook(path)` loads environment hooks. `load_evaluator_hook(path)` loads evaluator hooks. `load_tool_parser(arg)` loads a tool parser by name (e.g., "hermes") or from a hook file path. SGLang health check with clear error messages.
 
 ### `eval/`
 
-**evaluator.py** — `Evaluator` class orchestrates concurrent rollouts with checkpointing and pass@k metrics. Takes an async `env_factory` for flexible environment creation. Uses tqdm with `logging_redirect_tqdm` for clean progress output. Subclasses implement `load_dataset()` for different benchmarks.
+**evaluator.py** — `AsyncEnvFactory = Callable[[Action], Awaitable[Environment]]` type alias. `EvalSample` bundles step result with an `aborted` flag for checkpoint resume. `Evaluator` class orchestrates concurrent rollouts with JSONL checkpointing and pass@k metrics. Takes an async `env_factory` for flexible environment creation. Uses tqdm with `logging_redirect_tqdm` for clean progress output. Subclasses implement `load_dataset()` for different benchmarks and optionally override `validate_sample()` to mark failed samples as aborted (excluded from metrics, retried on resume).
 
 **registry.py** — Benchmark registry with `@register_eval(name)` decorator. Auto-discovers benchmark modules from `benchmarks/` subdirectory on first access. `get_benchmark(name)`, `list_benchmarks()`, and `list_unavailable_benchmarks()` for discovery. Modules with missing dependencies are tracked as unavailable.
 
@@ -92,6 +92,16 @@ The package lives in `src/strands_env/` with these modules:
 
 **code_interpreter.py** — `CodeInterpreterToolkit` wraps AWS Bedrock AgentCore Code Interpreter. Provides `execute_code` (Python) and `execute_command` (shell) tools. Sessions are lazily created and can be cleaned up via `cleanup()`.
 
+**web_search.py** — `WebSearchToolkit` with Serper and Google Custom Search providers, shared aiohttp session, asyncio.Semaphore rate limiting, and domain blocking. Credentials validated lazily via `@requires_env` decorator at call time.
+
+**web_scraper.py** — `WebScraperToolkit` using trafilatura (primary) or html2text (fallback) for content extraction. Optional LLM-based summarization via a `summarizer_model_factory`. Token budget (default 5000) limits extracted content length via tiktoken encoding.
+
+### `rewards/`
+
+**llm_judge_reward.py** — `LLMJudgeReward` abstract base for LLM-as-judge rewards. Set class attribute `judgment_format` to a Pydantic model for structured output or leave `None` for raw text. Subclasses implement `get_judge_prompt()` and `get_reward()`. Includes error handling with `default_reward` fallback.
+
+**math_verify_reward.py** — `MathVerifyReward` gives reward 1.0 if the model's `\boxed{}` answer is mathematically equivalent to ground truth. Uses `math_verify` library for SymPy-based symbolic equivalence (fractions, sets, simplification). Parses only the tail of the response to avoid long chain-of-thought.
+
 ### `environments/`
 
 **calculator/** — `CalculatorEnv` provides a simple calculator tool for math problems. Useful for testing and as a reference implementation.
@@ -100,6 +110,16 @@ The package lives in `src/strands_env/` with these modules:
 - `CODE`: Only `execute_code` (Python execution)
 - `TERMINAL`: Only `execute_command` (shell commands)
 - `CODE_AND_TERMINAL`: Both tools
+
+**mcp/** — `MCPEnvironment` backed by a single MCP server. Manages `MCPClient` lifecycle via `reset()` (starts client) and `cleanup()` (stops client). Supports optional pre-constructed client or subclass-managed initialization.
+
+**web_search/** — `WebSearchEnv` with pluggable search providers. `SearchConfig` selects provider ("serper" or "google"). `ScrapeConfig` enables optional web scraping with LLM-based summarization via a `summarizer_model_factory`.
+
+**terminal_bench/** — `TerminalBenchEnv` using Harbor's `DockerEnvironment` for task execution. `TerminalBenchConfig` holds task_id, directories, and timeout. Provides `execute_command` tool for shell commands in Docker. `TerminalBenchRewardFunction` runs verification tests in the container for binary (0/1) reward.
+
+### Other `utils/`
+
+**decorators.py** — `@requires_env(*env_vars)` decorator for async tool methods that validates required environment variables at invocation time, returning an error string if any are missing.
 
 ### Key Design Decisions
 
@@ -126,3 +146,7 @@ The package lives in `src/strands_env/` with these modules:
 - Do NOT push tags (`git push --tags`) - the user will create GitHub Releases manually to trigger PyPI CI/CD
 - When preparing a release: update version in `pyproject.toml`, commit, push code only
 - User creates the release on GitHub web UI which triggers the publish workflow
+
+## Maintenance
+
+When adding new modules, changing commands, or altering key design patterns, update this file to reflect those changes.
