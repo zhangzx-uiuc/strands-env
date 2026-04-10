@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 class CodeSandboxConfig(EnvironmentConfig, total=False):
     """Serializable configuration for `CodeSandboxEnv`."""
 
-    mode: Literal["code", "terminal", "code_and_terminal"]
+    mode: Literal["code", "terminal", "code_and_terminal", "code_with_stdin"]
 
 
 class CodeSandboxEnv(Environment):
@@ -73,6 +73,8 @@ class CodeSandboxEnv(Environment):
                 return [self._toolkit.execute_command]
             case "code_and_terminal":
                 return [self._toolkit.execute_code, self._toolkit.execute_command]
+            case "code_with_stdin":
+                return [self._toolkit.execute_code_with_stdin]
             case _:
                 raise ValueError(f"Invalid mode: {self.mode}")
 

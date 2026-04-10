@@ -16,9 +16,11 @@
 
 from .llm_judge_reward import JudgmentFormat, LLMJudgeReward
 from .math_verify_reward import MathVerifyReward
+from .code_test_case_reward import CodeTestCaseReward
 
 __all__ = [
     "JudgmentFormat",
     "LLMJudgeReward",
     "MathVerifyReward",
+    "CodeTestCaseReward",
 ]

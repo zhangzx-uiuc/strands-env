@@ -17,12 +17,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from aiolimiter import AsyncLimiter
 from strands import tool
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from strands_env.utils.aws import BotoClient
@@ -45,9 +49,9 @@ class CodeInterpreterQuotas:
         - [AWS Bedrock AgentCore default quotas](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/bedrock-agentcore-limits.html)
     """
 
-    DEFAULT_SESSION_CONCURRENCY = 1000
+    DEFAULT_SESSION_CONCURRENCY = 3000
     DEFAULT_START_TPS = 30
-    DEFAULT_INVOKE_TPS = 30
+    DEFAULT_INVOKE_TPS = 300
     DEFAULT_STOP_TPS = 30
 
     def __init__(
@@ -67,6 +71,25 @@ class CodeInterpreterQuotas:
     def to_thread(self, func: Any, /, *args: Any, **kwargs: Any) -> Any:
         """Run a blocking function in the quotas thread pool (or default pool if no quotas)."""
         return asyncio.get_running_loop().run_in_executor(self.executor, partial(func, *args, **kwargs))
+
+    async def _acquire_semaphore_with_warning(self, name: str) -> None:
+        """Acquire session semaphore and warn if it blocked."""
+        start = time.time()
+        await self.session_semaphore.acquire()
+        elapsed = time.time() - start
+        if elapsed > 0.001:  # If acquisition took > 1ms, we likely waited
+            logger.warning(
+                f"{name} semaphore hit limit (max: {self.session_semaphore._value + 1}), "
+                f"waited {elapsed:.3f}s"
+            )
+
+    async def _acquire_limiter_with_warning(self, limiter: AsyncLimiter, name: str) -> None:
+        """Acquire rate limiter and warn if it blocked."""
+        start = time.time()
+        await limiter.acquire()
+        elapsed = time.time() - start
+        if elapsed > 0.001:  # If acquisition took > 1ms, we likely waited
+            logger.warning(f"{name} rate limiter hit limit, waited {elapsed:.3f}s")
 
 
 class CodeInterpreterToolkit:
@@ -110,8 +133,8 @@ class CodeInterpreterToolkit:
                 if self.session_id is not None:
                     return  # type: ignore[unreachable]
 
-                await self.quotas.session_semaphore.acquire()
-                await self.quotas.start_limiter.acquire()
+                await self.quotas._acquire_semaphore_with_warning("Session")
+                await self.quotas._acquire_limiter_with_warning(self.quotas.start_limiter, "StartSession")
                 try:
                     response = await self.quotas.to_thread(
                         self.client.start_code_interpreter_session,
@@ -124,10 +147,68 @@ class CodeInterpreterToolkit:
                     raise
                 self.session_id = response["sessionId"]
 
+    def _indent_code(self, code: str, spaces: int) -> str:
+        """Indent code by the specified number of spaces.
+
+        Args:
+            code: Code to indent.
+            spaces: Number of spaces to add to each line.
+
+        Returns:
+            Indented code.
+        """
+        indent = ' ' * spaces
+        lines = code.split('\n')
+        return '\n'.join(indent + line if line.strip() else line for line in lines)
+
+    def _wrap_code_with_stdin(self, code: str, stdin: str) -> str:
+        """Wrap code with stdin input handling.
+
+        Args:
+            code: The Python code to wrap.
+            stdin: Input to provide via stdin.
+
+        Returns:
+            Wrapped code that handles stdin.
+        """
+        # Escape stdin for safe embedding in code string
+        escaped_stdin = stdin.replace('\\', '\\\\').replace("'''", "\\'\\'\\'")
+
+        wrapped_code = f"""import sys
+from io import StringIO
+import builtins
+
+# Store input lines
+_input_lines = '''{escaped_stdin}'''.split('\\n')
+_input_index = [0]  # Use list for mutable reference in closure
+
+# Override input() function
+_original_input = builtins.input
+def _mock_input(prompt=''):
+    if _input_index[0] >= len(_input_lines):
+        raise EOFError('No more input available')
+    line = _input_lines[_input_index[0]]
+    _input_index[0] += 1
+    return line
+
+builtins.input = _mock_input
+
+# Override sys.stdin as fallback
+sys.stdin = StringIO('''{escaped_stdin}''')
+
+try:
+    # Execute user code
+{self._indent_code(code, 4)}
+finally:
+    # Restore original input function
+    builtins.input = _original_input
+"""
+        return wrapped_code
+
     async def invoke(self, name: str, arguments: dict[str, Any]) -> str:
         """Invoke the code interpreter and return parsed response."""
         await self.start_session()
-        await self.quotas.invoke_limiter.acquire()
+        await self.quotas._acquire_limiter_with_warning(self.quotas.invoke_limiter, "InvokeCodeInterpreter")
         response = await self.quotas.to_thread(
             self.client.invoke_code_interpreter,
             codeInterpreterIdentifier=self.CODE_INTERPRETER_ID,
@@ -171,6 +252,20 @@ class CodeInterpreterToolkit:
         return await self.invoke("executeCode", {"code": code, "language": "python"})
 
     @tool
+    async def execute_code_with_stdin(self, code: str, stdin: str) -> str:
+        """Execute Python code with stdin input and return the result.
+
+        Args:
+            code: The Python code to execute.
+            stdin: Input to provide via stdin (newline-separated for multiple input() calls).
+
+        Returns:
+            Execution output text or error message.
+        """
+        wrapped_code = self._wrap_code_with_stdin(code, stdin)
+        return await self.invoke("executeCode", {"code": wrapped_code, "language": "python"})
+
+    @tool
     async def execute_command(self, command: str) -> str:
         """Execute a shell command and return the result.
 
@@ -185,7 +280,7 @@ class CodeInterpreterToolkit:
     async def cleanup(self) -> None:
         """Clean up code interpreter session."""
         if self.session_id:
-            await self.quotas.stop_limiter.acquire()
+            await self.quotas._acquire_limiter_with_warning(self.quotas.stop_limiter, "StopSession")
             try:
                 await self.quotas.to_thread(
                     self.client.stop_code_interpreter_session,
